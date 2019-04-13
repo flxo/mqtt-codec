@@ -9,39 +9,6 @@ use crate::proto::*;
 
 use super::{ConnectAckFlags, ConnectFlags, FixedHeader, WILL_QOS_SHIFT};
 
-pub(crate) fn read_packet(
-    src: &mut Cursor<Bytes>,
-    header: FixedHeader,
-) -> Result<Packet, ParseError> {
-    match header.packet_type {
-        CONNECT => decode_connect_packet(src),
-        CONNACK => decode_connect_ack_packet(src),
-        PUBLISH => decode_publish_packet(src, header),
-        PUBACK => Ok(Packet::PublishAck {
-            packet_id: read_u16(src)?,
-        }),
-        PUBREC => Ok(Packet::PublishReceived {
-            packet_id: read_u16(src)?,
-        }),
-        PUBREL => Ok(Packet::PublishRelease {
-            packet_id: read_u16(src)?,
-        }),
-        PUBCOMP => Ok(Packet::PublishComplete {
-            packet_id: read_u16(src)?,
-        }),
-        SUBSCRIBE => decode_subscribe_packet(src),
-        SUBACK => decode_subscribe_ack_packet(src),
-        UNSUBSCRIBE => decode_unsubscribe_packet(src),
-        UNSUBACK => Ok(Packet::UnsubscribeAck {
-            packet_id: read_u16(src)?,
-        }),
-        PINGREQ => Ok(Packet::PingRequest),
-        PINGRESP => Ok(Packet::PingResponse),
-        DISCONNECT => Ok(Packet::Disconnect),
-        _ => Err(ParseError::UnsupportedPacketType),
-    }
-}
-
 macro_rules! check_flag {
     ($flags:expr, $flag:expr) => {
         ($flags & $flag.bits()) == $flag.bits()
@@ -59,6 +26,47 @@ macro_rules! ensure {
             return Err($fmt, $($arg)+);
         }
     };
+}
+
+pub(crate) fn read_packet(
+    src: &mut Cursor<Bytes>,
+    header: FixedHeader,
+) -> Result<Packet, ParseError> {
+    match header.packet_type {
+        CONNECT => decode_connect_packet(src, header),
+        CONNACK => decode_connect_ack_packet(src, header),
+        PUBLISH => decode_publish_packet(src, header),
+        PUBACK => decode_publish_ack_packet(src, header),
+        PUBREC => decode_publish_rec_packet(src, header),
+        PUBREL => decode_publish_rel_packet(src, header),
+        PUBCOMP => decode_publish_comp_packet(src, header),
+        SUBSCRIBE => decode_subscribe_packet(src, header),
+        SUBACK => decode_subscribe_ack_packet(src, header),
+        UNSUBSCRIBE => decode_unsubscribe_packet(src, header),
+        UNSUBACK => decode_unsubscribe_ack_packet(src, header),
+        PINGREQ => {
+            ensure!(
+                header.packet_flags.trailing_zeros() >= 4,
+                ParseError::FixedHeaderReservedFlagsMismatch
+            );
+            Ok(Packet::PingRequest)
+        }
+        PINGRESP => {
+            ensure!(
+                header.packet_flags.trailing_zeros() >= 4,
+                ParseError::FixedHeaderReservedFlagsMismatch
+            );
+            Ok(Packet::PingResponse)
+        }
+        DISCONNECT => {
+            ensure!(
+                header.packet_flags.trailing_zeros() >= 4,
+                ParseError::FixedHeaderReservedFlagsMismatch
+            );
+            Ok(Packet::Disconnect)
+        }
+        _ => Err(ParseError::UnsupportedPacketType),
+    }
 }
 
 pub fn decode_variable_length(src: &[u8]) -> Result<Option<(usize, usize)>, ParseError> {
@@ -82,7 +90,15 @@ pub fn decode_variable_length(src: &[u8]) -> Result<Option<(usize, usize)>, Pars
     Ok(None)
 }
 
-fn decode_connect_packet(src: &mut Cursor<Bytes>) -> Result<Packet, ParseError> {
+fn decode_connect_packet(
+    src: &mut Cursor<Bytes>,
+    header: FixedHeader,
+) -> Result<Packet, ParseError> {
+    ensure!(
+        header.packet_flags.trailing_zeros() >= 4,
+        ParseError::FixedHeaderReservedFlagsMismatch
+    );
+
     ensure!(src.remaining() >= 10, ParseError::InvalidLength);
     let len = src.get_u16_be();
     ensure!(
@@ -150,7 +166,15 @@ fn decode_connect_packet(src: &mut Cursor<Bytes>) -> Result<Packet, ParseError> 
     }))
 }
 
-fn decode_connect_ack_packet(src: &mut Cursor<Bytes>) -> Result<Packet, ParseError> {
+fn decode_connect_ack_packet(
+    src: &mut Cursor<Bytes>,
+    header: FixedHeader,
+) -> Result<Packet, ParseError> {
+    ensure!(
+        header.packet_flags.trailing_zeros() >= 4,
+        ParseError::FixedHeaderReservedFlagsMismatch
+    );
+
     ensure!(src.remaining() >= 2, ParseError::InvalidLength);
     let flags = src.get_u8();
     ensure!(
@@ -190,7 +214,66 @@ fn decode_publish_packet(
     }))
 }
 
-fn decode_subscribe_packet(src: &mut Cursor<Bytes>) -> Result<Packet, ParseError> {
+fn decode_publish_ack_packet(
+    src: &mut Cursor<Bytes>,
+    header: FixedHeader,
+) -> Result<Packet, ParseError> {
+    ensure!(
+        header.packet_flags.trailing_zeros() >= 4,
+        ParseError::FixedHeaderReservedFlagsMismatch
+    );
+    Ok(Packet::PublishAck {
+        packet_id: read_u16(src)?,
+    })
+}
+
+fn decode_publish_rec_packet(
+    src: &mut Cursor<Bytes>,
+    header: FixedHeader,
+) -> Result<Packet, ParseError> {
+    ensure!(
+        header.packet_flags.trailing_zeros() >= 4,
+        ParseError::FixedHeaderReservedFlagsMismatch
+    );
+    Ok(Packet::PublishAck {
+        packet_id: read_u16(src)?,
+    })
+}
+
+fn decode_publish_rel_packet(
+    src: &mut Cursor<Bytes>,
+    header: FixedHeader,
+) -> Result<Packet, ParseError> {
+    ensure!(
+        header.packet_flags == 0b0010,
+        ParseError::FixedHeaderReservedFlagsMismatch
+    );
+    Ok(Packet::PublishRelease {
+        packet_id: read_u16(src)?,
+    })
+}
+
+fn decode_publish_comp_packet(
+    src: &mut Cursor<Bytes>,
+    header: FixedHeader,
+) -> Result<Packet, ParseError> {
+    ensure!(
+        header.packet_flags.trailing_zeros() >= 4,
+        ParseError::FixedHeaderReservedFlagsMismatch
+    );
+    Ok(Packet::PublishRelease {
+        packet_id: read_u16(src)?,
+    })
+}
+
+fn decode_subscribe_packet(
+    src: &mut Cursor<Bytes>,
+    header: FixedHeader,
+) -> Result<Packet, ParseError> {
+    ensure!(
+        header.packet_flags == 0b0010,
+        ParseError::FixedHeaderReservedFlagsMismatch
+    );
     let packet_id = read_u16(src)?;
     let mut topic_filters = Vec::new();
     while src.remaining() > 0 {
@@ -206,7 +289,14 @@ fn decode_subscribe_packet(src: &mut Cursor<Bytes>) -> Result<Packet, ParseError
     })
 }
 
-fn decode_subscribe_ack_packet(src: &mut Cursor<Bytes>) -> Result<Packet, ParseError> {
+fn decode_subscribe_ack_packet(
+    src: &mut Cursor<Bytes>,
+    header: FixedHeader,
+) -> Result<Packet, ParseError> {
+    ensure!(
+        header.packet_flags.trailing_zeros() >= 4,
+        ParseError::FixedHeaderReservedFlagsMismatch
+    );
     let packet_id = read_u16(src)?;
     let status = src
         .iter()
@@ -221,7 +311,14 @@ fn decode_subscribe_ack_packet(src: &mut Cursor<Bytes>) -> Result<Packet, ParseE
     Ok(Packet::SubscribeAck { packet_id, status })
 }
 
-fn decode_unsubscribe_packet(src: &mut Cursor<Bytes>) -> Result<Packet, ParseError> {
+fn decode_unsubscribe_packet(
+    src: &mut Cursor<Bytes>,
+    header: FixedHeader,
+) -> Result<Packet, ParseError> {
+    ensure!(
+        header.packet_flags == 0b0010,
+        ParseError::FixedHeaderReservedFlagsMismatch
+    );
     let packet_id = read_u16(src)?;
     let mut topic_filters = Vec::new();
     while src.remaining() > 0 {
@@ -230,6 +327,19 @@ fn decode_unsubscribe_packet(src: &mut Cursor<Bytes>) -> Result<Packet, ParseErr
     Ok(Packet::Unsubscribe {
         packet_id,
         topic_filters,
+    })
+}
+
+fn decode_unsubscribe_ack_packet(
+    src: &mut Cursor<Bytes>,
+    header: FixedHeader,
+) -> Result<Packet, ParseError> {
+    ensure!(
+        header.packet_flags.trailing_zeros() >= 4,
+        ParseError::FixedHeaderReservedFlagsMismatch
+    );
+    Ok(Packet::UnsubscribeAck {
+        packet_id: read_u16(src)?
     })
 }
 

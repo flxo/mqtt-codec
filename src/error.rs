@@ -5,6 +5,7 @@ pub enum ParseError {
     InvalidProtocol,
     InvalidLength,
     UnsupportedProtocolLevel,
+    FixedHeaderReservedFlagsMismatch,
     ConnectReservedFlagSet,
     ConnAckReservedFlagSet,
     InvalidClientId,
